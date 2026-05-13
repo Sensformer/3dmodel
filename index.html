@@ -6,7 +6,7 @@
     <title>3D 车模预览</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #f0f0f0; font-family: Tahoma, Geneva, sans-serif; }
-        canvas { display: flex; flex-direction: column; }
+        canvas { display: block; }
         #info {
             position: absolute;
             top: 10px;
@@ -33,6 +33,7 @@
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import { Sky } from 'three/addons/objects/Sky.js';
+        import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
         import GUI from 'lil-gui';
 
         // 场景设置
@@ -40,7 +41,6 @@
 
         const mainCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         mainCamera.position.set(6, 4, 6);
-        let activeCamera = mainCamera;
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -49,6 +49,106 @@
         renderer.toneMapping = THREE.ReinhardToneMapping;
         renderer.toneMappingExposure = 1.5;
         document.body.appendChild(renderer.domElement);
+
+        // 创建渲染目标
+        const renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+            minFilter: THREE.LinearFilter,
+            magFilter: THREE.LinearFilter,
+            format: THREE.RGBAFormat
+        });
+
+        // 鱼眼投影着色器
+        const fisheyeVertexShader = `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `;
+
+        const fisheyeFragmentShader = `
+            uniform sampler2D tDiffuse;
+            uniform float hFOV;
+            uniform float vFOV;
+            uniform int cameraModel;
+            varying vec2 vUv;
+
+            void main() {
+                vec2 uv = vUv * 2.0 - 1.0;
+                
+                if (cameraModel == 0) {
+                    gl_FragColor = texture2D(tDiffuse, vUv);
+                    return;
+                }
+                
+                float aspect = tan(radians(hFOV) / 2.0) / tan(radians(vFOV) / 2.0);
+                uv.x *= aspect;
+                
+                float r = length(uv);
+                
+                if (r > 1.0) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                    return;
+                }
+                
+                float phi = atan(uv.y, uv.x);
+                
+                float fovH = radians(hFOV);
+                float fovV = radians(vFOV);
+                
+                float maxFOV = max(fovH, fovV);
+                
+                float theta;
+                if (cameraModel == 1) {
+                    float r2 = r * r;
+                    float r4 = r2 * r2;
+                    float r6 = r4 * r2;
+                    float r8 = r6 * r2;
+                    theta = r * (1.0 + 1.0 * r2 + 0.8 * r4 + 0.5 * r6 + 0.3 * r8) * (maxFOV / 2.0);
+                } else {
+                    theta = r * (maxFOV / 2.0) * 2.0;
+                }
+                
+                theta = clamp(theta, 0.0, 3.1415926535 / 2.0);
+                
+                float tanTheta = tan(theta);
+                
+                vec2 dir;
+                dir.x = tanTheta * cos(phi);
+                dir.y = tanTheta * sin(phi);
+                
+                float scaleX = 1.0 / (2.0 * tan(fovH / 2.0));
+                float scaleY = 1.0 / (2.0 * tan(fovV / 2.0));
+                
+                vec2 texUv;
+                texUv.x = 0.5 + dir.x * scaleX;
+                texUv.y = 0.5 + dir.y * scaleY;
+                
+                if (texUv.x < 0.0 || texUv.x > 1.0 || texUv.y < 0.0 || texUv.y > 1.0) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                } else {
+                    gl_FragColor = texture2D(tDiffuse, texUv);
+                }
+            }
+        `;
+
+        // 创建后处理材质和全屏四边形
+        const fisheyeMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                tDiffuse: { value: renderTarget.texture },
+                hFOV: { value: 120 },
+                vFOV: { value: 70 },
+                cameraModel: { value: 1 }
+            },
+            vertexShader: fisheyeVertexShader,
+            fragmentShader: fisheyeFragmentShader
+        });
+
+        const quadGeometry = new THREE.PlaneGeometry(2, 2);
+        const quad = new THREE.Mesh(quadGeometry, fisheyeMaterial);
+        const postScene = new THREE.Scene();
+        const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        postScene.add(quad);
 
         // 控制器
         const controls = new OrbitControls(mainCamera, renderer.domElement);
@@ -89,7 +189,7 @@
 
         // --- 虚拟天空场景 (无穷远) ---
         let sky, sun;
-        function initSky() {
+        function initSky(skyFolder) {
             sky = new Sky();
             sky.scale.setScalar(450000);
             scene.add(sky);
@@ -125,7 +225,6 @@
                 directionalLight.position.copy(sun).multiplyScalar(10);
             }
 
-            const skyFolder = gui.addFolder('4. 虚拟环境控制');
             skyFolder.add(effectController, 'turbidity', 0.0, 20.0, 0.1).name('大气浑浊度').onChange(updateSky);
             skyFolder.add(effectController, 'rayleigh', 0.0, 4, 0.001).name('瑞利散射').onChange(updateSky);
             skyFolder.add(effectController, 'mieCoefficient', 0.0, 0.1, 0.001).name('米氏散射系数').onChange(updateSky);
@@ -144,12 +243,17 @@
             width: 180,     // 车宽 (cm)
             height: 140,    // 总高 (cm)
             camHeight: 120,  // 相机安装高度 (cm)
+            camDepth: 0,    // 相机嵌入深度 (cm)
+            cabinRatio: 0.9, // 车厢长度比例 (0.1 - 1.0)
             viewDistance: 50, // 统一视距 (m)
             markerRange: 10,  // 标尺显示范围 (m)
             showMarkers: true, // 是否显示标尺
-            frontFOV: 120, backFOV: 120, leftFOV: 120, rightFOV: 120,
+            showCalibration: true, // 是否显示标定布
+            hFOV: 160,        // 统一水平视场角 (deg)
+            vFOV: 90,         // 统一垂直视场角 (deg)
+            cameraModel: 'Kannala-Brandt (鱼眼)', // 当前模型名称
             frontYaw: 0, backYaw: 180, leftYaw: -90, rightYaw: 90,
-            frontPitch: -20, backPitch: -20, leftPitch: -20, rightPitch: -20,
+            frontPitch: -30, backPitch: -30, leftPitch: -23, rightPitch: -30,
             activeView: 'Main'
         };
 
@@ -165,6 +269,7 @@
         const helpers = {};
         let carGroup;
         let markerGroup;
+        let calibrationGroup;
 
         // 创建文字贴图函数
         function createTextLabel(text, color = '#ffffff') {
@@ -229,6 +334,72 @@
             scene.add(markerGroup);
         }
 
+        // 创建标定布函数
+        function createCalibrationBoards() {
+            if (calibrationGroup) scene.remove(calibrationGroup);
+            if (!carParams.showCalibration) return;
+
+            calibrationGroup = new THREE.Group();
+            
+            // 规格：2m x 2m 总长, 5x5格, 每格 30cm, 留白 25cm
+            const boardSize = 2.0; 
+            const gridSize = 1.5;  // 5 * 0.3m = 1.5m
+            const segments = 5;    // 5x5
+            const margin = (boardSize - gridSize) / 2; // 0.25m 边距
+
+            const size = 512;
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            
+            // 填充背景白色
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, size, size);
+
+            const pxPerMeter = size / boardSize;
+            const step = 0.3 * pxPerMeter; // 30cm 对应的像素
+            const startOffset = margin * pxPerMeter;
+
+            for (let i = 0; i < segments; i++) {
+                for (let j = 0; j < segments; j++) {
+                    if ((i + j) % 2 === 0) {
+                        ctx.fillStyle = '#000000';
+                        ctx.fillRect(startOffset + i * step, startOffset + j * step, step, step);
+                    }
+                }
+            }
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.magFilter = THREE.NearestFilter;
+            const boardGeo = new THREE.PlaneGeometry(boardSize, boardSize);
+            const boardMat = new THREE.MeshStandardMaterial({ map: texture, side: THREE.DoubleSide });
+
+            const L = carParams.length * CM_TO_UNIT;
+            const W = carParams.width * CM_TO_UNIT;
+
+            // 放置在四个角落 (距离车身边缘 1.0m 偏移，使中心位于角落外)
+            const offsetX = L / 2 + 1.2; 
+            const offsetZ = W / 2 + 1.2; 
+
+            const positions = [
+                { x: offsetX, z: offsetZ },  // 左前
+                { x: offsetX, z: -offsetZ }, // 右前
+                { x: -offsetX, z: offsetZ }, // 左后
+                { x: -offsetX, z: -offsetZ } // 右后
+            ];
+
+            positions.forEach(pos => {
+                const board = new THREE.Mesh(boardGeo, boardMat);
+                board.rotation.x = -Math.PI / 2;
+                board.position.set(pos.x, 0.02, pos.z);
+                board.receiveShadow = true;
+                calibrationGroup.add(board);
+            });
+
+            scene.add(calibrationGroup);
+        }
+
         // 创建车模函数
         function createCar() {
             if (carGroup) scene.remove(carGroup);
@@ -252,39 +423,88 @@
 
             // 1. 下层车身 (高度占 45%)
             const mainBodyH = H * 0.45;
-            const mainBody = new THREE.Mesh(new THREE.BoxGeometry(L, mainBodyH, W), bodyMaterial);
+            const mainBody = new THREE.Mesh(
+                new RoundedBoxGeometry(L, mainBodyH, W, 6, 0.2), // 增大导角半径至 0.2 (20cm)
+                bodyMaterial
+            );
             mainBody.position.y = mainBodyH / 2;
             mainBody.castShadow = true;
             carGroup.add(mainBody);
 
-            // 2. 上层车厢 (高度占 55%, 长度占 50%)
+            // 2. 上层车厢 (前半部分弧面化)
             const cabinH = H * 0.55;
-            const cabinL = L * 0.5;
-            const cabin = new THREE.Mesh(new THREE.BoxGeometry(cabinL, cabinH, W * 0.85), bodyMaterial);
-            cabin.position.set(-L * 0.05, mainBodyH + cabinH / 2, 0);
+            const cabinL = L * carParams.cabinRatio;
+            const cabinW = W * 0.85;
+
+            // 定义侧面轮廓形状 (修正：确保底部完全平直，仅顶部前端为弧面)
+            const cabinShape = new THREE.Shape();
+            const cL = cabinL;
+            const cH = cabinH;
+            
+            cabinShape.moveTo(-cL/2, -cH/2); // 1. 后下角
+            cabinShape.lineTo(cL/2, -cH/2);  // 2. 前下角 (这一行保证了底部的绝对平直)
+            // 从前下角开始向上弯曲，终点在顶部中心
+            cabinShape.quadraticCurveTo(cL/2, cH/2, 0, cH/2); 
+            cabinShape.lineTo(-cL/2, cH/2);   // 4. 后上角
+            cabinShape.lineTo(-cL/2, -cH/2);  // 5. 闭合
+
+            const extrudeSettings = {
+                depth: cabinW,
+                bevelEnabled: false, // 禁用导角，确保与底盘接触面平齐且边缘锐利
+                curveSegments: 32
+            };
+
+            const cabinGeo = new THREE.ExtrudeGeometry(cabinShape, extrudeSettings);
+            const cabin = new THREE.Mesh(cabinGeo, bodyMaterial);
+            
+            // 居中并定位 (修正旋转，使其与底盘方向一致)
+            cabin.position.set(-L * (1 - carParams.cabinRatio) * 0.1, mainBodyH + cH / 2, -cabinW / 2);
             cabin.castShadow = true;
             carGroup.add(cabin);
 
-            // 3. 前机盖斜坡
-            const hoodL = L * 0.3;
-            const hood = new THREE.Mesh(new THREE.BoxGeometry(hoodL, mainBodyH * 0.2, W), bodyMaterial);
-            hood.position.set(L * 0.35, mainBodyH + mainBodyH * 0.05, 0);
-            hood.rotation.z = -0.15;
-            carGroup.add(hood);
+            // 4. 玻璃窗 (同步修正：平底弧顶)
+            const glassShape = new THREE.Shape();
+            const gL = cL * 0.99;
+            const gH = cH * 0.98;
+            glassShape.moveTo(-gL/2, -gH/2);
+            glassShape.lineTo(gL/2, -gH/2); // 底部平直
+            glassShape.quadraticCurveTo(gL/2, gH/2, 0, gH/2); // 顶部弧形
+            glassShape.lineTo(-gL/2, gH/2);
+            glassShape.lineTo(-gL/2, -gH/2);
 
-            // 4. 玻璃窗
-            const glass = new THREE.Mesh(new THREE.BoxGeometry(cabinL * 0.95, cabinH * 0.9, W * 0.8), windowMaterial);
-            glass.position.copy(cabin.position);
+            const glassExtrudeSettings = { ...extrudeSettings, depth: cabinW * 1.01 };
+            const glassGeo = new THREE.ExtrudeGeometry(glassShape, glassExtrudeSettings);
+            const glass = new THREE.Mesh(glassGeo, windowMaterial);
+            // 居中并定位
+            glass.position.set(cabin.position.x, cabin.position.y, -(cabinW * 1.01) / 2);
             carGroup.add(glass);
 
             // 5. 车灯
-            const headlightGeo = new THREE.BoxGeometry(L * 0.02, mainBodyH * 0.3, W * 0.2);
+            const headlightGeo = new RoundedBoxGeometry(L * 0.02, mainBodyH * 0.3, W * 0.2, 2, 0.02);
             const leftLight = new THREE.Mesh(headlightGeo, lightMaterial);
             leftLight.position.set(L/2, mainBodyH * 0.7, W * 0.3);
             carGroup.add(leftLight);
             const rightLight = new THREE.Mesh(headlightGeo, lightMaterial);
             rightLight.position.set(L/2, mainBodyH * 0.7, -W * 0.3);
             carGroup.add(rightLight);
+
+            // 尾灯
+            const tailLightGeo = new RoundedBoxGeometry(L * 0.02, mainBodyH * 0.25, W * 0.25, 2, 0.02);
+            const leftTail = new THREE.Mesh(tailLightGeo, tailLightMaterial);
+            leftTail.position.set(-L/2, mainBodyH * 0.8, W * 0.3);
+            carGroup.add(leftTail);
+            const rightTail = new THREE.Mesh(tailLightGeo, tailLightMaterial);
+            rightTail.position.set(-L/2, mainBodyH * 0.8, -W * 0.3);
+            carGroup.add(rightTail);
+
+            // 后视镜
+            const mirrorGeo = new RoundedBoxGeometry(L * 0.05, mainBodyH * 0.25, W * 0.15, 2, 0.03);
+            const leftMirror = new THREE.Mesh(mirrorGeo, bodyMaterial);
+            leftMirror.position.set(L * 0.15, H * 0.7, W * 0.52);
+            carGroup.add(leftMirror);
+            const rightMirror = new THREE.Mesh(mirrorGeo, bodyMaterial);
+            rightMirror.position.set(L * 0.15, H * 0.7, -W * 0.52);
+            carGroup.add(rightMirror);
 
             // 6. 轮子
             function createWheel(x, z) {
@@ -307,6 +527,7 @@
 
             scene.add(carGroup);
             createMarkers(); // 更新标尺
+            createCalibrationBoards(); // 更新标定布
             updateAllCameras(); // 重新计算相机位置
         }
 
@@ -322,12 +543,13 @@
             const L = carParams.length * CM_TO_UNIT;
             const W = carParams.width * CM_TO_UNIT;
             const h = carParams.camHeight * CM_TO_UNIT;
+            const d = carParams.camDepth * CM_TO_UNIT;
 
-            // 动态设置相机安装点 (紧贴车身外缘)
-            carCameras.front.position.set(L/2 + 0.05, h, 0);
-            carCameras.back.position.set(-L/2 - 0.05, h, 0);
-            carCameras.left.position.set(0, h, W/2 + 0.05);
-            carCameras.right.position.set(0, h, -W/2 - 0.05);
+            // 动态设置相机安装点 (支持嵌入车体)
+            carCameras.front.position.set(L/2 + 0.05 - d, h, 0);
+            carCameras.back.position.set(-L/2 - 0.05 + d, h, 0);
+            carCameras.left.position.set(0, h, W/2 + 0.05 - d);
+            carCameras.right.position.set(0, h, -W/2 - 0.05 + d);
 
             Object.keys(carCameras).forEach(key => {
                 updateCameraOrientation(key);
@@ -359,12 +581,55 @@
             if (helper) helper.update();
         }
 
-        function updateViewDistance() {
+        let modelController;
+
+        function updateCameraProjection() {
+            const hFOV = carParams.hFOV;
+            const vFOV = carParams.vFOV;
+
+            // 根据水平视场角自动选择模型
+            let modelId;
+            if (hFOV < 90) {
+                carParams.cameraModel = 'Pinhole (针孔)';
+                modelId = 0;
+            } else if (hFOV < 160) {
+                carParams.cameraModel = 'Kannala-Brandt (鱼眼)';
+                modelId = 1;
+            } else {
+                carParams.cameraModel = 'Equidistant (等距)';
+                modelId = 2;
+            }
+            
+            if (modelController) modelController.updateDisplay();
+
+            // 更新着色器参数
+            fisheyeMaterial.uniforms.hFOV.value = hFOV;
+            fisheyeMaterial.uniforms.vFOV.value = vFOV;
+            fisheyeMaterial.uniforms.cameraModel.value = modelId;
+
+            const hRad = THREE.MathUtils.degToRad(hFOV);
+            const vRad = THREE.MathUtils.degToRad(vFOV);
+            
+            // 计算宽高比和垂直视场角
+            const aspect = Math.tan(hRad / 2) / Math.tan(vRad / 2);
+            const verticalFOV = 2 * Math.atan(Math.tan(hRad / 2) / aspect) * (180 / Math.PI);
+
             Object.values(carCameras).forEach(cam => {
+                cam.fov = verticalFOV;
+                cam.aspect = aspect;
                 cam.far = carParams.viewDistance;
                 cam.updateProjectionMatrix();
             });
+            
             Object.values(helpers).forEach(helper => helper.update());
+        }
+
+        // 获取当前激活相机的辅助函数
+        function getActiveCamera() {
+            if (carParams.activeView === 'Main') {
+                return mainCamera;
+            }
+            return carCameras[carParams.activeView.toLowerCase()];
         }
 
         // 初始化相机与传感器
@@ -387,29 +652,24 @@
 
         // GUI 设置
         const gui = new GUI();
-
-        updateViewDistance(); // 应用初始视距
-        initSky(); // 初始化虚拟场景
-        createCar(); // 首次创建
         
         const dimensionFolder = gui.addFolder('0. 车模尺寸');
         dimensionFolder.add(carParams, 'length', 200, 600).name('车长 (cm)').onChange(createCar);
         dimensionFolder.add(carParams, 'width', 100, 300).name('车宽 (cm)').onChange(createCar);
         dimensionFolder.add(carParams, 'height', 100, 250).name('车高 (cm)').onChange(createCar);
+        dimensionFolder.add(carParams, 'cabinRatio', 0.1, 1.0).name('车厢比例').onChange(createCar);
         dimensionFolder.add(carParams, 'camHeight', 20, 200).name('相机安装高度 (cm)').onChange(updateAllCameras);
+        dimensionFolder.add(carParams, 'camDepth', -10, 30).name('相机嵌入深度 (cm)').onChange(updateAllCameras);
         dimensionFolder.add(carParams, 'markerRange', 5, 100).name('标尺显示范围 (m)').onChange(createMarkers);
         dimensionFolder.add(carParams, 'showMarkers').name('显示距离标尺').onChange(createMarkers);
+        dimensionFolder.add(carParams, 'showCalibration').name('显示标定布').onChange(createCalibrationBoards);
 
         const fovFolder = gui.addFolder('1. 相机视距与 FOV');
-        fovFolder.add(carParams, 'viewDistance', 1, 200).name('统一视距 (m)').onChange(updateViewDistance);
-        ['front', 'back', 'left', 'right'].forEach(key => {
-            const labelMap = { front: '前', back: '后', left: '左', right: '右' };
-            fovFolder.add(carParams, `${key}FOV`, 10, 150).name(`${labelMap[key]}相机 (deg)`).onChange(v => {
-                carCameras[key].fov = v;
-                carCameras[key].updateProjectionMatrix();
-                helpers[key].update();
-            });
-        });
+        fovFolder.add(carParams, 'viewDistance', 1, 200).name('统一视距 (m)').onChange(updateCameraProjection);
+        fovFolder.add(carParams, 'hFOV', 10, 179).name('统一水平视场角 (deg)').onChange(updateCameraProjection);
+        fovFolder.add(carParams, 'vFOV', 10, 170).name('统一垂直视场角 (deg)').onChange(updateCameraProjection);
+        modelController = fovFolder.add(carParams, 'cameraModel').name('当前成像模型').listen();
+        modelController.domElement.style.pointerEvents = 'none';
 
         const yawFolder = gui.addFolder('2. 水平安装角');
         ['front', 'back', 'left', 'right'].forEach(key => {
@@ -419,6 +679,7 @@
                 updateCameraOrientation(key);
             });
         });
+        yawFolder.close();
 
         const pitchFolder = gui.addFolder('3. 垂直安装角');
         ['front', 'back', 'left', 'right'].forEach(key => {
@@ -429,21 +690,39 @@
             });
         });
 
+        const skyFolder = gui.addFolder('4. 虚拟环境控制');
+        skyFolder.close();
+
+        updateCameraProjection(); // 应用初始视距与 FOV
+        initSky(skyFolder); // 将 folder 传入
+        createCar(); // 首次创建
+
+        let controlsEnabled = true;
         gui.add(carParams, 'activeView', ['Main', 'Front', 'Back', 'Left', 'Right']).name('当前视角').onChange(v => {
-            if (v === 'Main') {
-                activeCamera = mainCamera;
-                controls.enabled = true;
-            } else {
-                activeCamera = carCameras[v.toLowerCase()];
-                controls.enabled = false;
-            }
+            controlsEnabled = (v === 'Main');
+            controls.enabled = controlsEnabled;
         });
 
         // 动画循环
         function animate() {
             requestAnimationFrame(animate);
-            controls.update();
-            renderer.render(scene, activeCamera);
+            
+            if (controlsEnabled) {
+                controls.update();
+            }
+            
+            const activeCam = getActiveCamera();
+            
+            if (carParams.activeView === 'Main') {
+                // 主视角直接渲染
+                renderer.render(scene, activeCam);
+            } else {
+                // 车相机：先渲染到目标，再应用鱼眼效果
+                renderer.setRenderTarget(renderTarget);
+                renderer.render(scene, activeCam);
+                renderer.setRenderTarget(null);
+                renderer.render(postScene, postCamera);
+            }
         }
 
         animate();
@@ -457,10 +736,7 @@
             mainCamera.aspect = aspect;
             mainCamera.updateProjectionMatrix();
 
-            Object.values(carCameras).forEach(cam => {
-                cam.aspect = aspect;
-                cam.updateProjectionMatrix();
-            });
+            renderTarget.setSize(width, height);
 
             renderer.setSize(width, height);
         });
