@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 车模预览</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f0f0f0; font-family: Tahoma, Geneva, sans-serif; }
+        canvas { display: flex; flex-direction: column; }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: #333;
+            font-family: Arial, sans-serif;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">3D 车模展示<br/>使用鼠标旋转、缩放</div>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "lil-gui": "https://unpkg.com/lil-gui@0.19.1/dist/lil-gui.esm.js"
+            }
+        }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { Sky } from 'three/addons/objects/Sky.js';
+        import GUI from 'lil-gui';
+
+        // 场景设置
+        const scene = new THREE.Scene();
+
+        const mainCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        mainCamera.position.set(6, 4, 6);
+        let activeCamera = mainCamera;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.toneMapping = THREE.ReinhardToneMapping;
+        renderer.toneMappingExposure = 1.5;
+        document.body.appendChild(renderer.domElement);
+
+        // 控制器
+        const controls = new OrbitControls(mainCamera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.maxPolarAngle = Math.PI / 2.1; // 限制视角不能穿过地面
+
+        // 灯光
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+
+        // 主光源
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        directionalLight.position.set(5, 10, 7.5);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
+        scene.add(directionalLight);
+
+        // 补光
+        const spotLight = new THREE.SpotLight(0xffffff, 1);
+        spotLight.position.set(-5, 5, -5);
+        scene.add(spotLight);
+
+        // 地面
+        const gridHelper = new THREE.GridHelper(40, 40, 0x444444, 0x222222);
+        scene.add(gridHelper);
+
+        const planeGeometry = new THREE.PlaneGeometry(1000, 1000); // 扩大地面
+        const planeMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0x111111,
+            roughness: 0.8,
+            metalness: 0.1
+        });
+        const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+        plane.rotation.x = -Math.PI / 2;
+        plane.receiveShadow = true;
+        scene.add(plane);
+
+        // --- 虚拟天空场景 (无穷远) ---
+        let sky, sun;
+        function initSky() {
+            sky = new Sky();
+            sky.scale.setScalar(450000);
+            scene.add(sky);
+
+            sun = new THREE.Vector3();
+
+            const effectController = {
+                turbidity: 10,
+                rayleigh: 3,
+                mieCoefficient: 0.005,
+                mieDirectionalG: 0.7,
+                elevation: 2,
+                azimuth: 180,
+                exposure: renderer.toneMappingExposure
+            };
+
+            function updateSky() {
+                const uniforms = sky.material.uniforms;
+                uniforms['turbidity'].value = effectController.turbidity;
+                uniforms['rayleigh'].value = effectController.rayleigh;
+                uniforms['mieCoefficient'].value = effectController.mieCoefficient;
+                uniforms['mieDirectionalG'].value = effectController.mieDirectionalG;
+
+                const phi = THREE.MathUtils.degToRad(90 - effectController.elevation);
+                const theta = THREE.MathUtils.degToRad(effectController.azimuth);
+
+                sun.setFromSphericalCoords(1, phi, theta);
+
+                uniforms['sunPosition'].value.copy(sun);
+                renderer.toneMappingExposure = effectController.exposure;
+
+                // 同步主光源位置
+                directionalLight.position.copy(sun).multiplyScalar(10);
+            }
+
+            const skyFolder = gui.addFolder('4. 虚拟环境控制');
+            skyFolder.add(effectController, 'turbidity', 0.0, 20.0, 0.1).name('大气浑浊度').onChange(updateSky);
+            skyFolder.add(effectController, 'rayleigh', 0.0, 4, 0.001).name('瑞利散射').onChange(updateSky);
+            skyFolder.add(effectController, 'mieCoefficient', 0.0, 0.1, 0.001).name('米氏散射系数').onChange(updateSky);
+            skyFolder.add(effectController, 'mieDirectionalG', 0.0, 1, 0.001).name('米氏散射方向').onChange(updateSky);
+            skyFolder.add(effectController, 'elevation', 0, 90, 0.1).name('太阳高度角').onChange(updateSky);
+            skyFolder.add(effectController, 'azimuth', -180, 180, 0.1).name('太阳方位角').onChange(updateSky);
+            skyFolder.add(effectController, 'exposure', 0, 3, 0.0001).name('曝光强度').onChange(updateSky);
+
+            updateSky();
+        }
+
+        // --- 全局参数与单位换算 --- 全局参数与单位换算 (1 unit = 100cm) ---
+        const CM_TO_UNIT = 0.01;
+        const carParams = {
+            length: 450,    // 车长 (cm)
+            width: 180,     // 车宽 (cm)
+            height: 140,    // 总高 (cm)
+            camHeight: 120,  // 相机安装高度 (cm)
+            viewDistance: 50, // 统一视距 (m)
+            markerRange: 10,  // 标尺显示范围 (m)
+            showMarkers: true, // 是否显示标尺
+            frontFOV: 120, backFOV: 120, leftFOV: 120, rightFOV: 120,
+            frontYaw: 0, backYaw: 180, leftYaw: -90, rightYaw: 90,
+            frontPitch: -20, backPitch: -20, leftPitch: -20, rightPitch: -20,
+            activeView: 'Main'
+        };
+
+        // 存储相机的安装参数
+        const cameraInstallation = {
+            front: { yaw: 0, pitch: -20 },
+            back: { yaw: 180, pitch: -20 },
+            left: { yaw: -90, pitch: -20 },
+            right: { yaw: 90, pitch: -20 }
+        };
+
+        const sensors = {};
+        const helpers = {};
+        let carGroup;
+        let markerGroup;
+
+        // 创建文字贴图函数
+        function createTextLabel(text, color = '#ffffff') {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 128;
+            canvas.height = 64;
+            ctx.fillStyle = color;
+            ctx.font = 'Bold 40px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(text, 64, 44);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+            const sprite = new THREE.Sprite(spriteMaterial);
+            sprite.scale.set(0.5, 0.25, 1);
+            return sprite;
+        }
+
+        // 创建标尺函数
+        function createMarkers() {
+            if (markerGroup) scene.remove(markerGroup);
+            if (!carParams.showMarkers) return;
+
+            markerGroup = new THREE.Group();
+            const range = carParams.markerRange; // 以米为单位
+            const H = carParams.height * CM_TO_UNIT;
+
+            // 绘制三轴中心线
+            function drawLine(start, end, color) {
+                const geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
+                const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: color }));
+                markerGroup.add(line);
+            }
+
+            // X轴 (长度方向) - 红色
+            drawLine(new THREE.Vector3(-range, 0.01, 0), new THREE.Vector3(range, 0.01, 0), 0xff0000);
+            // Z轴 (宽度方向) - 蓝色
+            drawLine(new THREE.Vector3(0, 0.01, -range), new THREE.Vector3(0, 0.01, range), 0x0000ff);
+
+            // X轴标注 (地面，米)
+            for (let x = -range; x <= range; x += 1) { // 每隔 1m 一个标注
+                if (Math.abs(x) < 0.1) continue;
+                const label = createTextLabel(`${x.toFixed(0)}m`, '#ffaaaa');
+                label.position.set(x, 0.05, 0.2); 
+                markerGroup.add(label);
+            }
+
+            // Z轴标注 (地面，米)
+            for (let z = -range; z <= range; z += 1) {
+                if (Math.abs(z) < 0.1) continue;
+                const label = createTextLabel(`${z.toFixed(0)}m`, '#aaaaff');
+                label.position.set(0.2, 0.05, z); 
+                markerGroup.add(label);
+            }
+
+            // 地面中心原点标注
+            const originLabel = createTextLabel('Origin(0,0)', '#ffffff');
+            originLabel.position.set(0, 0.1, 0);
+            markerGroup.add(originLabel);
+
+            scene.add(markerGroup);
+        }
+
+        // 创建车模函数
+        function createCar() {
+            if (carGroup) scene.remove(carGroup);
+            carGroup = new THREE.Group();
+
+            const L = carParams.length * CM_TO_UNIT;
+            const W = carParams.width * CM_TO_UNIT;
+            const H = carParams.height * CM_TO_UNIT;
+
+            // 材质定义
+            const bodyMaterial = new THREE.MeshPhysicalMaterial({ 
+                color: 0xcc0000, metalness: 0.9, roughness: 0.2, clearcoat: 1.0, clearcoatRoughness: 0.1
+            });
+            const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
+            const rimMaterial = new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: 0.9, roughness: 0.2 });
+            const windowMaterial = new THREE.MeshPhysicalMaterial({ 
+                color: 0x000000, transparent: true, opacity: 0.7, metalness: 1.0, roughness: 0, transmission: 0.5
+            });
+            const lightMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const tailLightMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+
+            // 1. 下层车身 (高度占 45%)
+            const mainBodyH = H * 0.45;
+            const mainBody = new THREE.Mesh(new THREE.BoxGeometry(L, mainBodyH, W), bodyMaterial);
+            mainBody.position.y = mainBodyH / 2;
+            mainBody.castShadow = true;
+            carGroup.add(mainBody);
+
+            // 2. 上层车厢 (高度占 55%, 长度占 50%)
+            const cabinH = H * 0.55;
+            const cabinL = L * 0.5;
+            const cabin = new THREE.Mesh(new THREE.BoxGeometry(cabinL, cabinH, W * 0.85), bodyMaterial);
+            cabin.position.set(-L * 0.05, mainBodyH + cabinH / 2, 0);
+            cabin.castShadow = true;
+            carGroup.add(cabin);
+
+            // 3. 前机盖斜坡
+            const hoodL = L * 0.3;
+            const hood = new THREE.Mesh(new THREE.BoxGeometry(hoodL, mainBodyH * 0.2, W), bodyMaterial);
+            hood.position.set(L * 0.35, mainBodyH + mainBodyH * 0.05, 0);
+            hood.rotation.z = -0.15;
+            carGroup.add(hood);
+
+            // 4. 玻璃窗
+            const glass = new THREE.Mesh(new THREE.BoxGeometry(cabinL * 0.95, cabinH * 0.9, W * 0.8), windowMaterial);
+            glass.position.copy(cabin.position);
+            carGroup.add(glass);
+
+            // 5. 车灯
+            const headlightGeo = new THREE.BoxGeometry(L * 0.02, mainBodyH * 0.3, W * 0.2);
+            const leftLight = new THREE.Mesh(headlightGeo, lightMaterial);
+            leftLight.position.set(L/2, mainBodyH * 0.7, W * 0.3);
+            carGroup.add(leftLight);
+            const rightLight = new THREE.Mesh(headlightGeo, lightMaterial);
+            rightLight.position.set(L/2, mainBodyH * 0.7, -W * 0.3);
+            carGroup.add(rightLight);
+
+            // 6. 轮子
+            function createWheel(x, z) {
+                const wheelGroup = new THREE.Group();
+                const radius = mainBodyH * 0.6;
+                const tire = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, W * 0.15, 32), wheelMaterial);
+                tire.rotation.x = Math.PI / 2;
+                wheelGroup.add(tire);
+                const rim = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.6, radius * 0.6, W * 0.16, 16), rimMaterial);
+                rim.rotation.x = Math.PI / 2;
+                wheelGroup.add(rim);
+                wheelGroup.position.set(x, radius * 0.8, z);
+                wheelGroup.castShadow = true;
+                return wheelGroup;
+            }
+            carGroup.add(createWheel(L * 0.3, W * 0.5));
+            carGroup.add(createWheel(L * 0.3, -W * 0.5));
+            carGroup.add(createWheel(-L * 0.3, W * 0.5));
+            carGroup.add(createWheel(-L * 0.3, -W * 0.5));
+
+            scene.add(carGroup);
+            createMarkers(); // 更新标尺
+            updateAllCameras(); // 重新计算相机位置
+        }
+
+        // --- 相机逻辑 ---
+        const carCameras = {
+            front: new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100),
+            back: new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100),
+            left: new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100),
+            right: new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100)
+        };
+
+        function updateAllCameras() {
+            const L = carParams.length * CM_TO_UNIT;
+            const W = carParams.width * CM_TO_UNIT;
+            const h = carParams.camHeight * CM_TO_UNIT;
+
+            // 动态设置相机安装点 (紧贴车身外缘)
+            carCameras.front.position.set(L/2 + 0.05, h, 0);
+            carCameras.back.position.set(-L/2 - 0.05, h, 0);
+            carCameras.left.position.set(0, h, W/2 + 0.05);
+            carCameras.right.position.set(0, h, -W/2 - 0.05);
+
+            Object.keys(carCameras).forEach(key => {
+                updateCameraOrientation(key);
+                if (sensors[key]) sensors[key].position.copy(carCameras[key].position);
+            });
+        }
+
+        function updateCameraOrientation(key) {
+            const cam = carCameras[key];
+            const install = cameraInstallation[key];
+            const sensor = sensors[key];
+            const helper = helpers[key];
+
+            const yawRad = THREE.MathUtils.degToRad(install.yaw);
+            const pitchRad = THREE.MathUtils.degToRad(install.pitch);
+
+            const direction = new THREE.Vector3(1, 0, 0);
+            const euler = new THREE.Euler(0, yawRad, pitchRad, 'YXZ');
+            direction.applyEuler(euler);
+
+            const target = new THREE.Vector3().copy(cam.position).add(direction);
+            cam.lookAt(target);
+            cam.updateMatrixWorld();
+
+            if (sensor) {
+                sensor.lookAt(target);
+                sensor.rotateX(Math.PI / 2);
+            }
+            if (helper) helper.update();
+        }
+
+        function updateViewDistance() {
+            Object.values(carCameras).forEach(cam => {
+                cam.far = carParams.viewDistance;
+                cam.updateProjectionMatrix();
+            });
+            Object.values(helpers).forEach(helper => helper.update());
+        }
+
+        // 初始化相机与传感器
+        const sensorGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.12, 16);
+        const sensorMaterial = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.9, roughness: 0.1 });
+        
+        Object.keys(carCameras).forEach(key => {
+            scene.add(carCameras[key]);
+            const sensor = new THREE.Mesh(sensorGeo, sensorMaterial);
+            const lens = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 8), new THREE.MeshBasicMaterial({ color: 0x0077ff }));
+            lens.position.set(0, 0.06, 0);
+            sensor.add(lens);
+            scene.add(sensor);
+            sensors[key] = sensor;
+
+            const helper = new THREE.CameraHelper(carCameras[key]);
+            scene.add(helper);
+            helpers[key] = helper;
+        });
+
+        // GUI 设置
+        const gui = new GUI();
+
+        updateViewDistance(); // 应用初始视距
+        initSky(); // 初始化虚拟场景
+        createCar(); // 首次创建
+        
+        const dimensionFolder = gui.addFolder('0. 车模尺寸');
+        dimensionFolder.add(carParams, 'length', 200, 600).name('车长 (cm)').onChange(createCar);
+        dimensionFolder.add(carParams, 'width', 100, 300).name('车宽 (cm)').onChange(createCar);
+        dimensionFolder.add(carParams, 'height', 100, 250).name('车高 (cm)').onChange(createCar);
+        dimensionFolder.add(carParams, 'camHeight', 20, 200).name('相机安装高度 (cm)').onChange(updateAllCameras);
+        dimensionFolder.add(carParams, 'markerRange', 5, 100).name('标尺显示范围 (m)').onChange(createMarkers);
+        dimensionFolder.add(carParams, 'showMarkers').name('显示距离标尺').onChange(createMarkers);
+
+        const fovFolder = gui.addFolder('1. 相机视距与 FOV');
+        fovFolder.add(carParams, 'viewDistance', 1, 200).name('统一视距 (m)').onChange(updateViewDistance);
+        ['front', 'back', 'left', 'right'].forEach(key => {
+            const labelMap = { front: '前', back: '后', left: '左', right: '右' };
+            fovFolder.add(carParams, `${key}FOV`, 10, 150).name(`${labelMap[key]}相机 (deg)`).onChange(v => {
+                carCameras[key].fov = v;
+                carCameras[key].updateProjectionMatrix();
+                helpers[key].update();
+            });
+        });
+
+        const yawFolder = gui.addFolder('2. 水平安装角');
+        ['front', 'back', 'left', 'right'].forEach(key => {
+            const labelMap = { front: '前', back: '后', left: '左', right: '右' };
+            yawFolder.add(carParams, `${key}Yaw`, -180, 180).name(`${labelMap[key]}相机 (deg)`).onChange(v => {
+                cameraInstallation[key].yaw = v;
+                updateCameraOrientation(key);
+            });
+        });
+
+        const pitchFolder = gui.addFolder('3. 垂直安装角');
+        ['front', 'back', 'left', 'right'].forEach(key => {
+            const labelMap = { front: '前', back: '后', left: '左', right: '右' };
+            pitchFolder.add(carParams, `${key}Pitch`, -90, 90).name(`${labelMap[key]}相机 (deg)`).onChange(v => {
+                cameraInstallation[key].pitch = v;
+                updateCameraOrientation(key);
+            });
+        });
+
+        gui.add(carParams, 'activeView', ['Main', 'Front', 'Back', 'Left', 'Right']).name('当前视角').onChange(v => {
+            if (v === 'Main') {
+                activeCamera = mainCamera;
+                controls.enabled = true;
+            } else {
+                activeCamera = carCameras[v.toLowerCase()];
+                controls.enabled = false;
+            }
+        });
+
+        // 动画循环
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, activeCamera);
+        }
+
+        animate();
+
+        // 窗口大小调整
+        window.addEventListener('resize', () => {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            const aspect = width / height;
+
+            mainCamera.aspect = aspect;
+            mainCamera.updateProjectionMatrix();
+
+            Object.values(carCameras).forEach(cam => {
+                cam.aspect = aspect;
+                cam.updateProjectionMatrix();
+            });
+
+            renderer.setSize(width, height);
+        });
+    </script>
+</body>
+</html>
