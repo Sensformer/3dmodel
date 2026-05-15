@@ -87,12 +87,14 @@ export function createCalibrationBoards(scene, carParams) {
     const L = carParams.length * CM_TO_UNIT;
     const W = carParams.width * CM_TO_UNIT;
     
-    // UI显示的是偏移值（标定布边缘距离车身边缘的距离）
+    // UI显示的是偏移值（标定布上离车身最近的角点到车身边缘的距离）
     const frontBackOffset = (carParams.calibrationFrontBackOffset || 20) * CM_TO_UNIT;
     const sideOffset = (carParams.calibrationSideOffset || 20) * CM_TO_UNIT;
 
-    // 标定布中心位置 = 车身边缘 + 偏移值 + 标定布半宽
-    // 这样标定布边缘到车身边缘的距离正好等于UI设置的偏移值
+    // 标定布中心位置计算：
+    // 车身边缘位置 = L/2 (前), W/2 (右)
+    // 标定布离车身最近的角点位置 = 车身边缘 + 偏移值
+    // 标定布中心位置 = 最近角点位置 + 标定布半宽/半高
     const frontX = L / 2 + frontBackOffset + boardSize / 2;      // 车头标定布中心位置
     const backX = -(L / 2 + frontBackOffset + boardSize / 2);    // 车尾标定布中心位置
     const sideZ = W / 2 + sideOffset + boardSize / 2;            // 车身侧面标定布中心位置
