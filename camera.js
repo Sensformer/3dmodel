@@ -5,6 +5,7 @@ const sensors = {};
 const helpers = {};
 const fovPyramids = {};
 let carCamerasRef = null;
+let carParamsRef = null;
 
 export const cameraInstallation = {
     front: { yaw: 0, pitch: -20 },
@@ -22,6 +23,17 @@ export function initCarCameras(scene, carParams) {
     };
 
     carCamerasRef = carCameras;
+    carParamsRef = carParams;
+
+    // 初始化相机安装参数
+    cameraInstallation.front.yaw = carParams.frontYaw;
+    cameraInstallation.front.pitch = carParams.frontPitch;
+    cameraInstallation.back.yaw = carParams.backYaw;
+    cameraInstallation.back.pitch = carParams.backPitch;
+    cameraInstallation.left.yaw = carParams.leftYaw;
+    cameraInstallation.left.pitch = carParams.leftPitch;
+    cameraInstallation.right.yaw = carParams.rightYaw;
+    cameraInstallation.right.pitch = carParams.rightPitch;
 
     const sensorGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.12, 16);
     const sensorMaterial = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.9, roughness: 0.1 });
@@ -62,8 +74,8 @@ export function updateAllCameras(carCameras, carParams) {
 
     carCameras.front.position.set(L/2 + 0.05 - d, h, 0);
     carCameras.back.position.set(-L/2 - 0.05 + d, h, 0);
-    carCameras.left.position.set(0, h, W/2 + 0.05 - d);
-    carCameras.right.position.set(0, h, -W/2 - 0.05 + d);
+    carCameras.left.position.set(0, h, -W/2 - 0.05 + d);
+    carCameras.right.position.set(0, h, W/2 + 0.05 - d);
 
     Object.keys(carCameras).forEach(key => {
         updateCameraOrientation(key);
@@ -72,7 +84,7 @@ export function updateAllCameras(carCameras, carParams) {
 }
 
 export function updateCameraOrientation(key) {
-    if (!carCamerasRef) return;
+    if (!carCamerasRef || !carParamsRef) return;
     const cam = carCamerasRef[key];
     const install = cameraInstallation[key];
     const sensor = sensors[key];
@@ -94,6 +106,9 @@ export function updateCameraOrientation(key) {
         sensor.rotateX(Math.PI / 2);
     }
     if (helper) helper.update();
+    
+    // 更新视场金字塔（Box模式）
+    updateFovPyramids(carCamerasRef, carParamsRef);
 }
 
 export function updateCameraProjection(carCameras, carParams, fisheyeMaterial, modelController) {

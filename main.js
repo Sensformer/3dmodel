@@ -24,7 +24,7 @@ export const carParams = {
     vFOV: 90,
     cameraModel: 'Kannala-Brandt (鱼眼)',
     fovDisplayMode: 'Lines',
-    frontYaw: 0, backYaw: 180, leftYaw: -90, rightYaw: 90,
+    frontYaw: 0, backYaw: 180, leftYaw: 90, rightYaw: -90,
     frontPitch: -30, backPitch: -30, leftPitch: -30, rightPitch: -30,
     activeView: 'Main'
 };
