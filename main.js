@@ -80,6 +80,25 @@ function init() {
 
     initViewSelector(gui, carParams, controls);
 
+    const saveImage = { action: () => {
+        renderer.render(scene, getActiveCamera(mainCamera, carCameras, carParams));
+        const link = document.createElement('a');
+        link.download = 'camera-view.jpg';
+        link.href = renderer.domElement.toDataURL('image/jpeg', 0.95);
+        link.click();
+    }};
+    gui.add(saveImage, 'action').name('📷 保存3D视图');
+
+    const saveFullScreen = { action: () => {
+        html2canvas(document.body).then(canvas => {
+            const link = document.createElement('a');
+            link.download = 'full-screen.jpg';
+            link.href = canvas.toDataURL('image/jpeg', 0.95);
+            link.click();
+        });
+    }};
+    gui.add(saveFullScreen, 'action').name('🖼️ 保存整个界面');
+
     updateCameraProjection(carCameras, carParams, fisheyeMaterial, modelController);
     updateFovDisplayMode(carCameras, carParams);
     createCar(scene, carParams, () => updateAllCameras(carCameras, carParams));
