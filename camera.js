@@ -7,6 +7,10 @@ const fovPyramids = {};
 let carCamerasRef = null;
 let carParamsRef = null;
 
+// 传感器尺寸 (mm) - 1/1.8" 传感器，1080p分辨率，像元尺寸4um
+const SENSOR_WIDTH = 7.68;   // 1920 * 4um = 7.68mm
+const SENSOR_HEIGHT = 4.32;  // 1080 * 4um = 4.32mm
+
 export const cameraInstallation = {
     front: { yaw: 0, pitch: -20 },
     back: { yaw: 180, pitch: -20 },
@@ -133,15 +137,9 @@ export function updateCameraProjection(carCameras, carParams, fisheyeMaterial, m
     fisheyeMaterial.uniforms.vFOV.value = vFOV;
     fisheyeMaterial.uniforms.cameraModel.value = modelId;
 
-    const hRad = THREE.MathUtils.degToRad(hFOV);
-    const vRad = THREE.MathUtils.degToRad(vFOV);
-
-    const aspect = Math.tan(hRad / 2) / Math.tan(vRad / 2);
-    const verticalFOV = 2 * Math.atan(Math.tan(hRad / 2) / aspect) * (180 / Math.PI);
-
     Object.values(carCameras).forEach(cam => {
-        cam.fov = verticalFOV;
-        cam.aspect = aspect;
+        cam.fov = 120;
+        cam.aspect = window.innerWidth / window.innerHeight;
         cam.far = carParams.viewDistance;
         cam.updateProjectionMatrix();
     });

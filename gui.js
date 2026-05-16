@@ -23,8 +23,9 @@ export function initGUI(scene, carParams, createCarCallback, updateAllCamerasCal
 
     const fovFolder = gui.addFolder('1. 相机视距与 FOV');
     fovFolder.add(carParams, 'viewDistance', 1, 200).name('统一视距 (m)').onChange(() => updateCameraProjectionCallback());
-    fovFolder.add(carParams, 'hFOV', 10, 179).name('统一水平视场角 (deg)').onChange(() => updateCameraProjectionCallback());
-    fovFolder.add(carParams, 'vFOV', 10, 170).name('统一垂直视场角 (deg)').onChange(() => updateCameraProjectionCallback());
+    fovFolder.add(carParams, 'focalLength', 1.0, 10.0).name('焦距 (mm)').onChange(() => updateCameraProjectionCallback());
+    fovFolder.add(carParams, 'hFOV', 10, 190).name('统一水平视场角 (deg)').onChange(() => updateCameraProjectionCallback());
+    fovFolder.add(carParams, 'vFOV', 10, 190).name('统一垂直视场角 (deg)').onChange(() => updateCameraProjectionCallback());
     fovFolder.add(carParams, 'fovDisplayMode', ['Lines', 'Box', 'Both', 'None']).name('视场显示方式').onChange(() => updateFovDisplayModeCallback());
     fovFolder.add(carParams, 'fovDisplayDistance', 1, 50).name('视场显示距离 (m)').onChange(() => updateFovDisplayModeCallback());
     modelController = fovFolder.add(carParams, 'cameraModel').name('当前成像模型').listen();

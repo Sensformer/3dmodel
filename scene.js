@@ -25,9 +25,10 @@ export function initMainCamera() {
 
 export function initRenderTarget() {
     return new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
-        minFilter: THREE.LinearFilter,
-        magFilter: THREE.LinearFilter,
-        format: THREE.RGBAFormat
+        minFilter: THREE.NearestFilter,
+        magFilter: THREE.NearestFilter,
+        format: THREE.RGBAFormat,
+        antialias: false
     });
 }
 
@@ -50,12 +51,27 @@ export function initLights(scene) {
 }
 
 export function initGround(scene) {
-    const gridHelper = new THREE.GridHelper(40, 40, 0x444444, 0x222222);
-    scene.add(gridHelper);
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    
+    const size = 50;
+    for (let x = 0; x < canvas.width; x += size) {
+        for (let y = 0; y < canvas.height; y += size) {
+            ctx.fillStyle = ((x + y) / size) % 2 === 0 ? '#333333' : '#444444';
+            ctx.fillRect(x, y, size, size);
+        }
+    }
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(50, 50);
 
-    const planeGeometry = new THREE.PlaneGeometry(1000, 1000);
+    const planeGeometry = new THREE.PlaneGeometry(500, 500);
     const planeMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0x111111,
+        map: texture,
         roughness: 0.8,
         metalness: 0.1
     });

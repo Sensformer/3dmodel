@@ -20,9 +20,10 @@ export const carParams = {
     showCalibration: true,
     calibrationFrontBackOffset: 20,
     calibrationSideOffset: 20,
-    hFOV: 160,
-    vFOV: 90,
-    cameraModel: 'Kannala-Brandt (鱼眼)',
+    focalLength: 1.7,
+    hFOV: 185,
+    vFOV: 185,
+    cameraModel: 'Equidistant (等距)',
     fovDisplayMode: 'Lines',
     frontYaw: 0, backYaw: 180, leftYaw: 90, rightYaw: -90,
     frontPitch: -30, backPitch: -30, leftPitch: -30, rightPitch: -30,
@@ -43,9 +44,9 @@ function init() {
     fisheyeMaterial = new THREE.ShaderMaterial({
         uniforms: {
             tDiffuse: { value: renderTarget.texture },
-            hFOV: { value: 160 },
-            vFOV: { value: 90 },
-            cameraModel: { value: 1 }
+            hFOV: { value: 185 },
+            vFOV: { value: 185 },
+            cameraModel: { value: 2 }
         },
         vertexShader: fisheyeVertexShader,
         fragmentShader: fisheyeFragmentShader
